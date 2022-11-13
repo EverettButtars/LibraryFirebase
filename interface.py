@@ -1,41 +1,36 @@
 def main():
-    import mysql.connector
-    from sqlalchemy import create_engine
-    import pandas as pd
+    
+    import firebase_admin
+    from firebase_admin import credentials
+    from firebase_admin import db
+    from firebase_admin import auth
 
-    #conect to database
-    library = mysql.connector.connect(
-    host = "localhost",
-    user = "Admin",
-    password = "Library",
-    database = "Library"
-    )
-    cursor = library.cursor()
+    cred = credentials.Certificate("library-project-firebase-adminsdk.json")
+    libApp = firebase_admin.initialize_app(cred, {
+	    'databaseURL':'https://library-project-9b912-default-rtdb.firebaseio.com/'
+	    })
+
+    ref = db.reference("/Books")
 
     #bundle connection info for easier transport
-    conInfo = [library, cursor]
 
     #Initialize Function Dictionary
     functions = {"search": search,
                  "remove": remove,
                  "add": add,
                  "changeBook": changeBook,
-                 "numberOf": numberOf,
-                 "numberOfTypes": numberOfTypes,
-                 "totalBooks": totalBooks,
                  "Help": getHelp}
 
     print("Welcome to the Library Database!")
     print("To get help, type, \"Help\" ")
     while True:
         inp = input(':')
-        (functions[inp])(conInfo)
-
+        (functions[inp])(ref)
 
     library.close()
 
-def getHelp(conInfo):
-    print("commands: search, remove, add, changeBook, numberOf, numberOfTypes, totalBooks")
+def getHelp(ref):
+    print("commands: search, remove, add, changeBook")
 
 def getBookInfo():
     while True:
@@ -59,123 +54,82 @@ def getBookInfo():
         return bookInfo
     
         
-def search(conInfo):
+def search(ref):
     searchInfo = getBookInfo()
 
     print("Attempting to search...")
 
-    #format odd elements for wild card
-    odds = searchInfo[1::2]
-    for i in range(0, len(odds)):
-        odds[i] = "'%"+odds[i]+"%'"
-    
-    query = "SELECT * FROM books WHERE "
-
     #break search info into tuples
-    searchInfo = list(zip(searchInfo[0::2], odds))
-    print(searchInfo)
-    #join tuples using the like attribute, and join each liked argument with and
-    query += " AND ".join([" LIKE ".join(i) for i in searchInfo])
-    print(query)
+    searchInfo = list(zip(searchInfo[0::2], searchInfo[1::2]))
+
     #execute and retrive results
-    conInfo[1].execute(query)
-    result = conInfo[1].fetchall()
-
-    #prints all results
-    print("Search results:")
-    for i in result:
-        print(i)
+    books = ref.get()
 
 
-def remove(conInfo):
+    
+    for key, value in books.items():
+        keep = True
+        for searchItem, searchValue in searchInfo:
+            try:
+                if str(searchValue) not in str(value[searchItem]):
+                    keep = False
+            except: 
+                print("error on book")
+                print(value)
+                keep = False
+        if keep:
+            print(value)
+
+
+
+def remove(ref):
     #Retrive ISBN
     isbn = input("What is the isbn of the book?: ")
     #format
-    query = "DELETE FROM books WHERE ISBN = %s"
-    #attempt
-    conInfo[1].execute(query, list(isbn))
-    conInfo[0].commit()
-
+    books = ref.get()
+    for key, value in books.items():
+        if value['ISBN'] == isbn:
+            ref.child(key).set({})
+            break
     
 
-def add(conInfo):
+def add(ref):
     #retrive book info
     newBook = getBookInfo()
 
     print("Attempting to add...")
 
-    #format string for query, and establish values
-    query = ("INSERT INTO books (%s) " % ', '.join(newBook[0::2]) + "VALUES (%s)" % ', '.join(["%s"] * (int(len(newBook)/2))))
-
     #slice and store odd elements from the list
     values = newBook[1::2]
+    keys = newBook[0::2]
+
+    newBookDict = dict()
+
+    for i in range(0, len(values)):
+        newBookDict[keys[i]] = values[i]
 
     #execute and commit
-    conInfo[1].execute(query, values)
-    conInfo[0].commit()
+    ref.push().set(newBookDict)
     print("Success!")
 
 
 
-def changeBook(conInfo):
+def changeBook(ref):
     #Retrive Book details
-    isbn = input("What is the isbn of the book?: ")
-    changes = getBookInfo()
+    isbn = input("What is the ISBN of the book?: ")
+    info = getBookInfo()
 
-    #format each identifier to have the = %s after it
-    odds = changes[0::2]
-    for i in range(0, len(odds)):
-        odds[i] += " = %s"
-    
-    #create query 
-    query = "UPDATE books SET {}".format(", ".join(odds)) + " WHERE ISBN = %s"
-    print(query)
-    changes = changes[1::2]
-    changes.append(isbn)
-    print(changes)
-    #attempt
-    conInfo[1].execute(query, changes)
-    conInfo[0].commit()
+    changes = info[0::2]
+    keys = info[1::2]
+    books = ref.get()
+
+    for key, value in books.items():
+        if value['ISBN'] == isbn:
+            for i in range(0, len(keys)):
+                print({ str(keys[i]): changes[i]})
+                ref.child(key).update({changes[i]:keys[i]})
+
     print("Success!")
-
-
-
-def numberOf(conInfo):
-    #gather data
-    column = input("What category? ex. Author: ")
-    key = input("Search term? ex. Rowling: ")
-    #format for wildcard
-    key = "'%"+key+"%'"
-
-    query = "SELECT COUNT(%s) FROM books WHERE %s LIKE %s"
-
-    conInfo[1].execute(query, (column, column, key))
-    data = conInfo[1].fetchall()
-    print("The number of books matching input: ")
-    print(data[0][0])
-    
-
-
-
-def numberOfTypes(conInfo):
-    #gather data
-    column = input("What category? ex. Author: ")
-
-    query = "SELECT COUNT(%s) FROM books GROUP BY (%s)"
-
-    conInfo[1].execute(query, (column, column))
-    data = conInfo[1].fetchall()
-    print(data[0][0])
-
-
-
-def totalBooks(conInfo):
-    #total copies of the books in library printed worldwide
-    query = "SELECT SUM(Volume) FROM books"
-
-    conInfo[1].execute(query)
-    data = conInfo[1].fetchall()
-    print("total copies of the books in library printed worldwide: " + str(int(data[0][0])))
 
 if __name__ == "__main__":
     main()
